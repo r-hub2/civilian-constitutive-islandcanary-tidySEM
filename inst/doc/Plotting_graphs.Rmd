@@ -1,0 +1,727 @@
+---
+title: "Plotting graphs for structural equation models"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Plotting graphs for structural equation models}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+generate_pngs <- TRUE
+```
+
+`tidySEM` offers a user-friendly, tidy workflow for plotting graphs for SEM models. The workflow is largely *programmatic*, meaning that graphs are created mostly automatically from the output of an analysis. At the same time, all elements of the graph are stored as `data.frame`s, which allows swift and easy customization of graphics, and artistic freedom. Some existing graphing packages  automatically create a layout, but are very difficult to customize. Particularly for complex SEM models, it may be preferable to make the layout by hand, including only nodes one wishes to plot, and reporting the rest in a comprehensive table of coefficients (e.g., one obtained through `table_results()`.
+
+For users wholly unfamiliar with SEM graphs, I recommend reading the 
+[vignette about SEM graphing conventions](https://cjvanlissa.github.io/tidySEM/articles/sem_graph.html) first.
+
+Let's load the required packages:
+
+```{r setup, message=FALSE, warning = FALSE}
+library(tidySEM)
+library(lavaan)
+library(ggplot2)
+library(dplyr)
+```
+
+## The tidySEM workflow
+
+The workflow underlying graphing in `tidySEM` is as follows:
+
+1. Run an analysis, e.g., using `lavaan::sem()` or `MplusAutomation::mplusModeler()`, passing the output to an object, e.g., `fit`
+2. Plot the graph using the function `graph(fit)`, or customize the graph further by following the optional steps below.
+3. *Optionally* Examine what nodes and edges can be extracted from the fit model object, by running `get_nodes(fit)` and `get_edges(fit)`
+4. *Optionally* Specify a layout for the graph using `get_layout()`
+5. *Optionally*, prepare graph data before plotting, by running `prepare_graph(fit, layout)`. Store the resulting graph data in an object, e.g., `graph_data`
+6. *Optionally*, access the nodes and edges in `graph_data` using `nodes(graph_data)` and `edges(graph_data)`
+7. *Optionally*, modify the nodes and edges in `graph_data` using `nodes(graph_data) <- ...`and `edges(graph_data) <- ...`
+
+This workflow ensures a high degree of transparency and customizability. Objects returned by all functions are "tidy" data, i.e., tabular `data.frames`, and can be modified using the familiar suite of functions in the 'tidyverse'.
+
+## Example: Graphing a CFA
+
+### Step 1: Run an analysis
+
+As an example, let's make a graph for a classic `lavaan` tutorial example for CFA. First, we conduct the SEM analysis:
+
+```{r, eval = FALSE, echo = TRUE}
+library(lavaan)
+HS.model <- ' visual  =~ x1 + x2 + x3
+              textual =~ x4 + x5 + x6
+              speed   =~ x7 + x8 + x9 '
+fit <- cfa(HS.model, data=HolzingerSwineford1939)
+```
+```{r, eval = TRUE, echo = FALSE, message=FALSE}
+library(lavaan)
+suppressWarnings({
+HS.model <- ' visual  =~ x1 + x2 + x3
+              textual =~ x4 + x5 + x6
+              speed   =~ x7 + x8 + x9 '
+fit <- cfa(HS.model, data=HolzingerSwineford1939)
+})
+```
+
+### Step 2: Plot the graph
+
+At this point, we could simply plot the graph:
+
+```{r, echo = TRUE, eval = FALSE}
+graph_sem(model = fit)
+```
+```{r echo = FALSE, warning = FALSE, message = FALSE, out.width='100%'}
+p <- graph_sem(model = fit, text_size = 2, fix_coord = TRUE)
+if(generate_pngs) ggsave("pgfig1.png", p, device = "png", width= 9.5, height = 3)
+knitr::include_graphics("pgfig1.png")
+```
+
+This uses a default layout, provided by the `igraph` package. However, the node placement is not very aesthetically pleasing. One of the areas where `tidySEM` really excels is customization. Because every aspect of the graph is represented as tidy data (basically, a spreadsheet), it is easy to move nodes around and create a custom layout.
+
+### Optional step 3: Customizing the layout
+
+In `tidySEM`, the layout is specified as a matrix (grid) with node names and empty spaces (`NA` or `""`). There are essentially three ways to specify the layout:
+
+1. Automatically, from the fit model
+2. Manually in R
+3. In a spreadsheet program
+
+#### Automatically generate layout for a model
+
+The example above used an automatically generated layout for the fit model (`lavaan` or `Mplus`).
+If you open the help file for the function by running `?graph_sem`,
+you can see that the default argument is `layout = get_layout(x = model)`, where model refers to the `model` argument of the same function.
+
+The `get_layout()` function automatically generates a layout for a fit model object.
+To get this layout as a matrix, you can run:
+
+```{r eval = TRUE, echo = TRUE}
+get_layout(fit)
+```
+```{r, eval = FALSE, echo = FALSE, message=FALSE, warning = FALSE}
+library(lavaan)
+suppressWarnings({
+fit <- cfa(' visual  =~ x1 + x2 + x3 ',
+           data = HolzingerSwineford1939[1:50, ])
+get_layout(fit)
+})
+```
+The `get_layout()` function relies on `igraph::layout_as_tree()` to place the nodes.
+Other layout functions from the `igraph` package can be used by specifying the `layout_algorithm = ...` argument:
+
+```{r message=FALSE, warning = FALSE}
+get_layout(fit, layout_algorithm = "layout_in_circle")
+get_layout(fit, layout_algorithm = "layout_on_grid")
+```
+
+#### Specifying layout manually in R
+
+Manually specifying the layout can be done by providing node names and empty spaces (`NA` or `""`), and the number of rows of the desired layout matrix. For example: 
+
+```{r}
+get_layout("c", NA,  "d",
+           NA,  "e", NA, rows = 2)
+```
+
+Of course, it is also possible to simply define a matrix using `matrix()`.
+
+#### Specifying layout in a spreadsheet program
+
+Specifying the layout in a spreadsheet program is very user-friendly, because one can visually position the nodes, e.g.:
+
+![](spreadsheet.png)
+
+To obtain the layout matrix, one can save the spreadsheet as `.csv` file and load it in R like this:
+
+```{r, eval = FALSE, echo = TRUE}
+read.csv("example.csv")
+```
+
+```{r echo = FALSE, eval = FALSE}
+write.csv(matrix(c("x1", "x2",  "x3", "",  "visual", ""), nrow = 2, byrow = TRUE), file = "example.csv", row.names = FALSE)
+read.csv("example.csv")
+file.remove("example.csv")
+```
+
+Alternatively, one can select the layout as in the image above, copy it to the clipboard, and then read it into R from the clipboard. This works differently on Windows and Mac.
+
+On Windows, run:
+
+```{r, eval = FALSE, echo = TRUE}
+read.table("clipboard", sep = "\t")
+```
+
+On Mac, run:
+
+```{r, eval = FALSE, echo = TRUE}
+read.table(pipe("pbpaste"), sep="\t")
+```
+
+```{r echo = FALSE, eval = TRUE}
+structure(list(V1 = structure(2:1, .Label = c("", "x1"), class = "factor"), 
+    V2 = structure(2:1, .Label = c("visual", "x2"), class = "factor"), 
+    V3 = structure(2:1, .Label = c("", "x3"), class = "factor")), class = "data.frame", row.names = c(NA, 
+-2L))
+HS.model <- ' visual  =~ x1 + x2 + x3
+              textual =~ x4 + x5 + x6
+              speed   =~ x7 + x8 + x9 '
+fit <- cfa(HS.model, data=HolzingerSwineford1939)
+```
+
+### Examples of user-defined layout
+
+We can specify a simple layout for two hypothetical nodes `x` and `y` is generated as follows:
+
+```{r}
+get_layout("x", "y", rows = 1)
+```
+
+For a mediation model, one might specify a layout like this:
+
+```{r}
+get_layout("", "m", "",
+           "x", "", "y", rows = 2)
+```
+
+For a three-item CFA model, one might specify:
+
+```{r}
+get_layout("", "F", "",
+           "y1", "y2", "y3", rows = 2)
+```
+
+And for the CFA model we estimated above:
+
+```{r}
+lay <- get_layout("", "", "visual","","textual","","speed","", "",
+                  "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", rows = 2)
+```
+
+We could plot the CFA model with this custom layout as follows:
+
+```{r, eval = FALSE}
+graph_sem(fit, layout = lay)
+```
+```{r echo = FALSE, warning = FALSE, message = FALSE, out.width='100%'}
+p <- graph_sem(fit, layout = lay) + coord_fixed()
+if(generate_pngs) ggsave("pgfig2_1.png", p, device = "png", width= 9.5, height = 3)
+knitr::include_graphics("pgfig2_1.png")
+```
+
+### Step 4: Customize nodes and edges
+
+For the simple model above, it is easy to verify the names of the nodes and edges from the syntax above: The nodes consist of three latent variables (visual, textual, and speed), and nine observed variables (x1-x9). The edges are nine factor loadings - and three latent variable correlations, included by default. We can confirm which nodes are available by running `get_nodes()`:
+
+```{r, eval = TRUE}
+get_nodes(fit)
+```
+
+```{r, eval = FALSE, echo = FALSE, results= "asis"}
+knitr::kable(get_nodes(fit))
+```
+
+And for the edges:
+
+```{r}
+get_edges(fit)
+```
+
+Note that only the first few columns are used for plotting (specifically, `from`, `to`, `arrow`, `label`, `connect_from`, `connect_to`, and `curvature`).
+The remaining columns correspond to the output of `table_results(fit)`.
+These auxiliary columns can be used to conditionally customize the graph (e.g., changing the color or linetype for significant paths only).
+
+#### Customizing node and edge labels
+
+The `get_nodes()` and `get_edges()` functions both call `table_results()` on the fit model object to get information about the nodes and edges.
+Both functions have a `label` argument which can either be a character string referencing a column of the output of `table_results()`, or an expression that is evaluated in the context of that output.
+
+This allows you to customize node and edge labels. For example, maybe you want to combine the parameter estimate and its confidence interval into an edge label:
+
+```{r}
+get_edges(fit, label = paste(est, confint))
+```
+
+We can do the same for the nodes, but note that in the previous `lavaan` model, the mean structure was **not** part of the model.
+As the nodes represent means and intercepts, `table_results()` will not retrieve any parameter estimates for the nodes when the mean structure is not part of the model.
+In absence of additional information about the nodes, `get_nodes()` will use the node name as a label.To remove all node labels, specify `label = NULL`.
+
+We can re-run the model with a mean structure to get more information about the nodes:
+
+```{r}
+fit <- cfa(HS.model, data=HolzingerSwineford1939, meanstructure = TRUE)
+```
+
+Running `get_nodes()` now uses the estimated means in the label:
+
+```{r}
+get_nodes(fit)
+```
+
+These labels can be further customized as shown below:
+
+```{r}
+get_nodes(fit, label = paste0(name, "\n", est, " ", confint))
+```
+
+#### Customize labels of a `sem_graph`
+
+Instead of customizing the node and edge labels in the call to `get_nodes()` and `get_edges()`,
+it is also possible to use the auxiliary columns in the `nodes` and `edges` elements of a `sem_graph` object to customize the labels (or other properties of the plot) later.
+First, let's generate a `sem_graph` object and examine the `edges` element:
+<!-- Refer back to the output above of `get_edges(fit)` to see that, by default, -->
+<!-- all columns returned by `table_results()` are included. -->
+<!-- Let's use these columns  -->
+
+```{r}
+p <- prepare_graph(fit)
+edges(p)
+```
+
+All of the columns in the edges element can be used to manually construct labels, using the `edit_graph()` function:
+
+```{r}
+prepare_graph(fit) %>%
+  edit_graph({ label = paste(est_sig_std, "\n", confint_std) }) %>%
+  plot()
+```
+
+The same can be done for the node labels:
+
+```{r}
+prepare_graph(fit) %>%
+  edit_graph({ label = paste(est_sig_std, "\n", confint_std) }) %>%
+  edit_graph({ label = paste(name, "\n", est_sig_std, "\n", confint_std) }, element = "nodes") %>%
+  plot()
+```
+
+Note that, by specifying both `"nodes"` and `"edges")`, both nodes and edges are edited - but in the preceding example, we actually want different labels for the nodes and edges (so that node labels are shown).
+For example, we can change the label color for both nodes and edges:
+
+```{r}
+prepare_graph(fit) %>%
+  edit_graph({ label_color = "blue" }) %>%
+  plot()
+```
+
+
+The section on **Visual aspects** further demonstrates how to use these auxiliary columns to customize visual properties of the graph.
+
+### Optional step 5: accessing graph data before plotting
+
+One important feature of `tidySEM` graphing is that the data used to compose the plot can be conveniently accessed an modified before plotting. First, use `prepare_graph()` to assign the plot data to an object.
+
+```{r}
+graph_data <- prepare_graph(model = fit, layout = lay)
+```
+
+### Optional step 6: Access the nodes and edges
+
+The nodes and edges can be examined using `nodes(graph_data)` and `edges(graph_data)`:
+
+```{r}
+nodes(graph_data)
+edges(graph_data)
+```
+
+### Optional step 7: Modify the nodes and edges
+
+At this stage, we may want to improve the basic plot slightly. The functions `nodes(graph_data) <- ...` and `edges(graph_data) <- ...` can be used to modify the nodes and edges. These functions pair well with the general 'tidyverse' workflow. For example, we might want to print node labels for latent variables in *Title Case* instead of just using the variable names:
+
+```{r, message=FALSE}
+library(dplyr)
+library(stringr)
+nodes(graph_data) <- nodes(graph_data) %>%
+  mutate(label = str_to_title(label))
+```
+
+```{r echo = FALSE}
+# $label[1:3] <- str_to_title(nodes(graph_data)$label[1:3])
+graph_data <- prepare_graph(model = fit, layout = lay)
+```
+
+Now, for the edges, we see that the default edging algorithm has connected some nodes side-to-side (based on the smallest possible Euclidian distance). However, in this simple graph, it makes more sense to connect all nodes top-to-bottom - except for the latent variable covariances. We can use the same conditional replacement for the edges:
+
+```{r, eval = FALSE}
+edges(graph_data) %>%
+  mutate(connect_from = replace(connect_from, is.na(curvature), "bottom")) %>%
+  mutate(connect_to = replace(connect_to, is.na(curvature), "top")) -> edges(graph_data)
+```
+
+### Plot the customized graph
+
+We can plot a customized graph using `plot(graph_data)`; a generic plot method for `sem_graph` objects:
+
+```{r, eval = FALSE}
+plot(graph_data)
+```
+```{r echo = FALSE, warning = FALSE, message = FALSE, out.width='100%'}
+p <- plot(graph_data) + coord_fixed()
+if(generate_pngs) ggsave("pgfig2.png", p, device = "png", width= 9.5, height = 3)
+knitr::include_graphics("pgfig2.png")
+```
+
+## Connecting nodes
+
+The functions `graph_sem()` and `prepare_graph()` will always try to connect nodes in an aesthetically pleasing way. To do this, they connect nodes by one of the four sides (top, bottom, left and right), based on the shortest distance between two nodes. Alternatively, users can specify a value to the `angle` parameter. This parameter connects nodes top-to-bottom when they are within `angle` degrees above and below each other. Remaining nodes are connected side-to-side. Thus, by increasing `angle` to a larger number (up to 180 degrees), we can also ensure that all nodes are connected top to bottom:
+
+```{r, eval = FALSE}
+graph_sem(model = fit, layout = lay, angle = 170)
+```
+```{r echo = FALSE, warning = FALSE, message = FALSE, out.width='100%'}
+p <- graph_sem(model = fit, layout = lay, angle = 170)
+if(generate_pngs) ggsave("pgfig3.png", p, device = "png", width= 9.5, height = 3)
+knitr::include_graphics("pgfig3.png")
+```
+
+## Visual aspects
+
+The visual aspects of graphs created using `graph_sem()` and `prepare_graph()` can be easily customized (see `?graph_sem()`).
+These functions construct a graph based on a data.frame of nodes, and a data.frame of edges.
+The visual aspects can be customized by adding **extra columns** to those data.frames.
+
+### Visual aspects of edges
+
+Edges have the following aesthetics (see `?geom_path()`):
+
+* `linetype`: The type of line, e.g., continuous (`linetype = 1` or dashed `linetype = 2`)
+* `colour` or `color`: The color of the line (e.g., `colour = "red"` or `colour = "blue"`)
+* `size`: The size of the line (e.g., `size = 1` or `size = 2`)
+* `alpha`: The transparency of the line (e.g., `alpha = 1` or `alpha = .2`)
+
+These aesthetics can be customized by adding columns to the edges data.frame, whose names correspond to the aesthetics. For example:
+
+```{r, eval = FALSE}
+edg <- data.frame(from = "x",
+                  to = "y",
+                  linetype = 2,
+                  colour = "red",
+                  size = 2,
+                  alpha = .5)
+
+graph_sem(edges = edg, layout = get_layout("x", "y", rows = 1))
+```
+```{r echo = FALSE, warning = FALSE, message = FALSE, out.width='30%'}
+edg <- data.frame(from = "x",
+                  to = "y",
+                  linetype = 2,
+                  colour = "red",
+                  size = 2,
+                  alpha = .5)
+
+p <- graph_sem(edges = edg, layout = get_layout("x", "y", rows = 1))
+
+if(generate_pngs) ggsave("pgfig4.png", p, device = "png", width= 4, height = 1)
+knitr::include_graphics("pgfig4.png")
+```
+
+### Visual aspects of nodes
+
+Nodes have the following aesthetics (see `?geom_polygon()`):
+
+* `linetype`: The type of line surrounding the node, e.g., continuous (`linetype = 1` or dashed `linetype = 2`)
+* `colour` or `color`: The color of the line surrounding the node (e.g., `colour = "red"` or `colour = "blue"`)
+* `fill`: The interior color of the node (e.g., `colour = "red"` or `colour = "blue"`)
+* `size`: The size of the line (e.g., `size = 1` or `size = 2`)
+* `alpha`: The transparency of the node (e.g., `alpha = 1` or `alpha = .2`)
+
+These, too, can be appended as extra columns to the nodes data.frame:
+
+```{r, eval = FALSE}
+edg <- data.frame(from = "x",
+                  to = "y")
+nod <- data.frame(name = c("x", "y"),
+                    shape = c("rect", "oval"),
+                    linetype = c(2, 2),
+                    colour = c("blue", "blue"),
+                    fill = c("blue", "blue"),
+                    size = c(2, 2),
+                    alpha = .5)
+graph_sem(edges = edg, nodes = nod, layout = get_layout("x", "y", rows = 1))
+```
+```{r echo = FALSE, warning = FALSE, message = FALSE, out.width='30%'}
+edg <- data.frame(from = "x",
+                  to = "y")
+nod <- data.frame(name = c("x", "y"),
+                    shape = c("rect", "oval"),
+                    linetype = c(2, 2),
+                    colour = c("blue", "blue"),
+                    fill = c("blue", "blue"),
+                    size = c(2, 2),
+                    alpha = .5)
+p <- graph_sem(edges = edg, nodes = nod, layout = get_layout("x", "y", rows = 1))
+
+if(generate_pngs) ggsave("pgfig5.png", p, device = "png", width= 4, height = 1)
+knitr::include_graphics("pgfig5.png")
+```
+
+These aesthetics can also be passed to the `sem_graph` object after preparing the data, for example, for highlighting a specific model element, such as the low factor loading for x2 on visual in the CFA example from before:
+
+```{r, eval = FALSE}
+edges(graph_data) %>%
+  mutate(colour = "black") %>%
+  mutate(colour = replace(colour, from == "visual" & to == "x2", "red")) %>%
+  mutate(linetype = 1) %>%
+  mutate(linetype = replace(linetype, from == "visual" & to == "x2", 2)) %>%
+  mutate(alpha = 1) %>%
+  mutate(alpha = replace(alpha, from == "visual" & to == "x2", .5)) -> edges(graph_data)
+plot(graph_data)
+```
+```{r echo = FALSE, warning = FALSE, message = FALSE, out.width='100%'}
+edges(graph_data) %>%
+  mutate(colour = "black") %>%
+  mutate(colour = replace(colour, from == "visual" & to == "x2", "red")) %>%
+  mutate(linetype = 1) %>%
+  mutate(linetype = replace(linetype, from == "visual" & to == "x2", 2)) %>%
+  mutate(alpha = 1) %>%
+  mutate(alpha = replace(alpha, from == "visual" & to == "x2", .5)) -> edges(graph_data)
+p <- plot(graph_data)
+
+if(generate_pngs) ggsave("pgfig6.png", p, device = "png", width= 9.5, height = 3)
+knitr::include_graphics("pgfig6.png")
+```
+
+### Visual aspects of edge labels
+
+Like nodes and edges, edge labels can be customized. Labels have the same aesthetics as the ggplot function `geom_label()` (see `?geom_label`). However, to disambiguate them from the edge aesthetics, all label aesthetics are prefaced by `"label_"`:
+
+* `label_colour` or `label_color`: The color of the label text (e.g., `label_colour = "red"`)
+* `label_fill`: The color of the rectangle behind the label text, ( e.g., `label_fill = "blue"`)
+* `label_size`: The font size of the label (e.g., `label_size = 4`)
+* `label_alpha`: The transparency of the label (e.g., `alpha = 1` or `alpha = .2`)
+* `label_family`: The font family of the label text. By default, three are available: `"serif"`, `"sans"` and `"mono"`
+* `label_fontface`: The face of the label text: `"plain"`, `"bold"`, `"italic"`, or "`bold.italic"`
+* `label_hjust`: Horizontal justification of label text; either a string (`"left"`, `"center"`, `"right"`) or a number between 0 and 1 (left = 0, center = 0.5, right = 1)
+* `label_vjust`: Vertical justification of label text; either a string (`"top"`, `"middle"`, `"bottom"`) or a number between 0 and 1 (top = 1, middle = 0.5, bottom = 0)
+* `label_lineheight`: Line height for multiline text
+* `label_location`: Where along the edge to plot the label; a number between 0 (beginning) and 1 (end)
+
+```{r, eval = FALSE}
+edg <- data.frame(from = "x",
+                  to = "y",
+                  label = "text",
+                  label_colour = "blue",
+                  label_fill = "red",
+                  label_size = 6,
+                  label_alpha = .5,
+                  label_family = "mono",
+                  label_fontface = "bold",
+                  label_hjust = "left",
+                  label_vjust = "top",
+                  label_lineheight = 1.5,
+                  label_location = .2
+                  )
+
+graph_sem(edges = edg, layout = get_layout("x", "y", rows = 1))
+```
+```{r echo = FALSE, warning = FALSE, message = FALSE, out.width='30%'}
+edg <- data.frame(from = "x",
+                  to = "y",
+                  label = "text",
+                  label_colour = "blue",
+                  label_fill = "red",
+                  label_size = 6,
+                  label_alpha = .5,
+                  label_family = "mono",
+                  label_fontface = "bold",
+                  label_hjust = "left",
+                  label_vjust = "top",
+                  label_lineheight = 1.5,
+                  label_location = .2
+                  )
+
+p = graph_sem(edges = edg, layout = get_layout("x", "y", rows = 1))
+
+if(generate_pngs) ggsave("pgfig7.png", p, device = "png", width= 4, height = 1)
+knitr::include_graphics("pgfig7.png")
+```
+
+### Conditionally customize visual aspects
+
+The functions `get_edges()` and `get_nodes()` rely on `table_results()` to
+extract information about nodes and edges from SEM models.
+All of the columns returned by `table_results()` can be used to conditionally
+customize visual aspects of the graph.
+Let's estimate a model and look at all of the columns extracted by `get_edges()`:
+
+```{r, eval = TRUE, echo = FALSE, warning = FALSE, message = FALSE, out.width='30%'}
+fit <- sem("mpg ~ cyl
+           mpg ~ am", data = mtcars, meanstructure = TRUE)
+get_edges(fit)
+```
+
+Any of these columns can be used to conditionally format the graph.
+For example, note that one of the regression paths is positive and the other negative.
+We might want to color positive edges green:
+
+```{r, eval = FALSE, out.width="300px"}
+set.seed(6)
+prepare_graph(fit) %>%
+  color_pos_edges("green") %>%
+  plot()
+```
+```{r, echo = FALSE, out.width="300px"}
+set.seed(6)
+prepare_graph(fit) %>%
+  color_pos_edges("green") %>%
+  plot() -> p
+ggsave("pgfig8.png", p, device = "png", width= 4, height = 4)
+knitr::include_graphics("pgfig8.png")
+```
+
+However, the variance arrow is also colored green, because it is an edge as well.
+This is where other conditional formatting functions come in handy. 
+Imagine we want to color the negative regression path red, and color the variance black - and make the variance transparent as well, to reduce its visual importance:
+
+```{r, eval = FALSE}
+prepare_graph(fit) %>%
+  color_pos_edges("green") %>%
+  color_neg_edges("red") %>%
+  color_var("black") %>%
+  alpha_var(.2) %>%
+  plot()
+```
+```{r, echo = FALSE, out.width="300px"}
+set.seed(6)
+prepare_graph(fit) %>%
+  color_pos_edges("green") %>%
+  color_neg_edges("red") %>%
+  color_var("black") %>%
+  alpha_var(.2) %>%
+  plot() -> p
+ggsave("pgfig9.png", p, device = "png", width= 4, height = 4)
+knitr::include_graphics("pgfig9.png")
+```
+
+There are many dedicated conditional customization functions like these.
+They make use of the generic function `if_edit()`, and are documented in its help file (see `?if_edit`).
+
+The function `if_edit()` takes an expression and a condition as arguments.
+This makes custom conditional formatting possible.
+For example, imagine that we want to color every graph element with the number "4" in the column `est` blue, you could use:
+
+```{r, eval = FALSE}
+prepare_graph(fit) %>%
+  # Add color column to the graph elements
+  edit_graph({ color = "black" }) %>% 
+  # Conditionally change color to blue when the column 'est' contains the number 4
+  if_edit(grepl("4", est), {color = "blue"}) %>%
+  plot()
+```
+```{r, echo = FALSE, out.width="300px"}
+set.seed(6)
+prepare_graph(fit) %>%
+  # Add color column to the graph elements
+  edit_graph({ color = "black" }) %>% 
+  # Conditionally change color to blue when the column 'est' contains the number 4
+  if_edit(grepl("4", est), {color = "blue"}) %>%
+  plot()->p
+ggsave("pgfig10.png", p, device = "png", width= 4, height = 4)
+knitr::include_graphics("pgfig10.png")
+```
+
+## Math Notation in Graphs
+
+Since the objects created by `prepare_graph()` and `graph_sem()` are `ggplot` objects, we can use the full functionality of `ggplot` to customize them.
+The following example, based on code provided by GitHub user `dumaskvn`, showcases how `plotmath` labels can be displayed (see `?plotmath`).
+There are several ways to do this; this is just one example.
+
+```{r, eval = FALSE}
+model <- "
+  Sepal.Length ~ Sepal.Width + Petal.Length
+  Sepal.Width ~ Petal.Length
+"
+# fit model
+fit <- sem(model, data = iris)
+# specify layout for consistency
+layout <- get_layout("", "Sepal.Width", "",
+                     "Petal.Length", "", "Sepal.Length", rows = 2)
+# get data from prepare_graph
+p <- prepare_graph(fit, layout = layout, angle = 180)
+
+# standard graph
+plot(p)
+
+# Duplicate node data.frame
+df_nodes <- p$nodes
+# Add mathematical notation to node label
+df_nodes$label <- paste("atop(", p$nodes$label, ", ", c("alpha-div", # Add a Greek letter
+                                                 paste0("R^2 ==", formatC(inspect(fit, "r2"), digits = 2, format = "f"))), ")")  # Add R2 to node labels
+# Set original labels to blank
+p$nodes$label <- "" 
+
+# Plot, treat as ggplot object and add parsed node labels
+plot(p) + geom_text(data = df_nodes, aes(x=x, y=y, label=label), parse = TRUE)
+
+```
+
+```{r, echo = FALSE, out.width="300px"}
+set.seed(6)
+model <- "
+  Sepal.Length ~ Sepal.Width + Petal.Length
+  Sepal.Width ~ Petal.Length
+"
+# fit model
+fit <- sem(model, data = iris)
+# specify layout for consistency
+layout <- get_layout("", "Sepal.Width", "",
+                     "Petal.Length", "", "Sepal.Length", rows = 2)
+# get data from prepare_graph
+p <- prepare_graph(fit, layout = layout, angle = 180)
+
+# standard graph
+# plot(p)
+
+# Duplicate node data.frame
+df_nodes <- p$nodes
+# Add mathematical notation to node label
+df_nodes$label <- paste("atop(", p$nodes$label, ", ", c("alpha-div", # Add a Greek letter
+                                                 paste0("R^2 ==", formatC(inspect(fit, "r2"), digits = 2, format = "f"))), ")")  # Add R2 to node labels
+# Set original labels to blank
+p$nodes$label <- "" 
+
+# Plot, treat as ggplot object and add parsed node labels
+p <- plot(p) + geom_text(data = df_nodes, aes(x=x, y=y, label=label), parse = TRUE)
+ggsave("pgfig11.png", p, device = "png", width= 5, height = 5)
+knitr::include_graphics("pgfig11.png")
+```
+
+<!--As explained before, the functions `get_edges()` and `get_nodes()`,
+which are used in the default arguments of `prepare_graph()` and `graph_sem()`,
+have an argument `columns` which adds auxiliary columns to the resulting data.frames.
+This can be used to customize visual aspects of the edges and nodes based on, for example, the value of the estimates:
+
+```r, eval = TRUE, echo = FALSE, warning = FALSE, message = FALSE, out.width='30%'}
+fit <- sem("mpg ~ cyl
+           mpg ~ am", data = mtcars)
+
+p <- prepare_graph(fit,
+                   edges = get_edges(fit, columns = "est"),
+                   fix_coord = TRUE)
+edges(p) %>%
+  mutate(color = "black",
+         color = replace(color, arrow == "last" & as.numeric(est) < 0, "red"),
+         color = replace(color, arrow == "last" & as.numeric(est) > 0, "green")) -> edges(p)
+
+plot(p)
+```
+```r, eval = FALSE, echo = FALSE, warning = FALSE, message = FALSE, out.width='30%'}
+fit <- sem("mpg ~ cyl
+           mpg ~ am", data = mtcars)
+set.seed(15)
+p <- prepare_graph(fit,
+                   edges = get_edges(fit, columns = "est"),
+                   fix_coord = TRUE)
+edges(p) %>%
+  mutate(color = "black",
+         color = replace(color, arrow == "last" & as.numeric(est) < 0, "red"),
+         color = replace(color, arrow == "last" & as.numeric(est) > 0, "green")) -> edges(p)
+
+p <- plot(p)
+
+ggsave("pgfig8.png", p, device = "png", width= 4, height = 4)
+knitr::include_graphics("pgfig8.png")
+```
+-->
